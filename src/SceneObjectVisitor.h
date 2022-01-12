@@ -8,6 +8,7 @@
 #include <QUndoStack>
 #include "SceneModel.h"
 #include <vsg/ui/KeyEvent.h>
+#include <vsg/vk/State.h>
 
 namespace route {
     class SceneTrajectory;
@@ -80,6 +81,22 @@ namespace route {
         }
     };
 */
+    class CalculateTransform : public vsg::Visitor
+    {
+    public:
+        CalculateTransform();
+
+        vsg::MatrixStack stack;
+
+        QUndoStack *undoStack;
+
+        void apply(vsg::Node &node) override;
+
+        void apply(route::SceneObject &object);
+
+        void apply(vsg::Transform &transform) override;
+    };
+
     class FindNode : public vsg::ConstVisitor, public vsg::LineSegmentIntersector::Intersection
     {
     public:
@@ -91,7 +108,7 @@ namespace route {
         std::pair<const route::SplinePoint*, const vsg::Node*> trackpoint;
         std::pair<const vsg::Switch*, const vsg::Node*> tile;
 
-        vsg::KeyModifier keyModifier;
+        uint16_t keyModifier;
 
         void apply(const vsg::Node &node) override;
 

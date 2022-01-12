@@ -1,6 +1,7 @@
 #include "SceneModel.h"
 #include "ParentVisitor.h"
 #include "LambdaVisitor.h"
+#include "SceneObjectVisitor.h"
 #include "undo-redo.h"
 #include <QMimeData>
 #include <sstream>
@@ -40,12 +41,12 @@ QModelIndex SceneModel::index(int row, int column, const QModelIndex &parent) co
 
         auto autoF = [&child, row](const auto& node) { child = node.children.at(row).node; };
         auto groupF = [&child, row](const vsg::Group& node) { child = node.children.at(row); };
-        auto swF = [&child, row](const vsg::Switch& node) mutable
+        auto swF = [&child, row](const vsg::Switch& node)
         {
-            while ((node.children.at(row).mask & route::SceneObjects) == 0) {
-                row++;
-            }
-            child = node.children.at(row).node;
+            auto object = std::find_if(node.children.begin(), node.children.end(), [](const vsg::Switch::Child &ch) { return (ch.mask & route::SceneObjects) != 0;} );
+            object += row;
+            Q_ASSERT(object < node.children.cend());
+            child = object->node;
         };
 
         CFunctionVisitor<decltype (autoF)> fv(autoF);
@@ -81,6 +82,7 @@ QModelIndex SceneModel::parent(const QModelIndex &child) const
     if (parent && grandParent)
     {
         FindPositionVisitor fpv(parent);
+        fpv.traversalMask = route::SceneObjects;
         return createIndex(fpv(grandParent), 0, const_cast<vsg::Node*>(parent));
     }
     return QModelIndex();
@@ -96,15 +98,31 @@ bool SceneModel::removeRows(int row, int count, const QModelIndex &parent)
 
     auto autoF = [row, count](auto& node)
     {
-        auto it = node.children.cbegin() + row;
-        auto count_iterator = it + count;
-
-        for( ; it != count_iterator; ++it)
-            node.children.erase(it);
+        auto begin = node.children.cbegin() + row;
+        auto end = begin + count - 1;
+        Q_ASSERT(end < node.children.end());
+        if(begin == end)
+            node.children.erase(begin);
+        else
+            node.children.erase(begin, end);
     };
     auto groupF = [autoF](vsg::Group& node) { autoF(node); };
-    auto swF = [autoF](vsg::Switch& node) { autoF(node); };
     auto lodF = [autoF](vsg::LOD& node) { autoF(node); };
+
+    auto swF = [row, count](vsg::Switch& node)
+    {
+        auto begin = std::find_if(node.children.begin(), node.children.end(), [](const vsg::Switch::Child &ch)
+        {
+            return (ch.mask & route::SceneObjects) != 0;}
+        );
+        begin += row;
+        auto end = begin + count - 1;
+        Q_ASSERT(end < node.children.end());
+        if(begin == end)
+            node.children.erase(begin);
+        else
+            node.children.erase(begin, end);
+    };
 
     FunctionVisitor fv(groupF, swF, lodF);
     beginRemoveRows(parent, row, row + count - 1);
@@ -126,7 +144,7 @@ int SceneModel::addNode(const QModelIndex &parent, vsg::ref_ptr<vsg::Node> loade
 
     auto groupF = [loaded](vsg::Group& group) { group.addChild(loaded); };
     auto swF = [loaded, mask](vsg::Switch& sw) { sw.addChild(mask, loaded); };
-    //auto lodF = [loaded](vsg::LOD& node) { autoF(node); };
+    auto lodF = [loaded](vsg::LOD& node) { node.addChild(vsg::LOD::Child{0.0, loaded}); };
 
     beginInsertRows(parent, row, row);
     FunctionVisitor fv(groupF, swF);
@@ -156,15 +174,19 @@ uint32_t SceneModel::setMask(uint32_t mask, const QModelIndex &index)
 
 QModelIndex SceneModel::removeNode(const QModelIndex &index)
 {
-    FindPositionVisitor fpv(static_cast<vsg::Node*>(index.internalPointer()));
+    //FindPositionVisitor fpv(static_cast<vsg::Node*>(index.internalPointer()));
+    //fpv.traversalMask = route::SceneObjects;
     auto parent = index.parent();
-    removeRows(fpv(static_cast<vsg::Node*>(index.parent().internalPointer())), 1, parent);
+    //removeRows(fpv(static_cast<vsg::Node*>(index.parent().internalPointer())), 1, parent);
+    removeRow(index.row(), parent);
     return parent;
 }
 void SceneModel::removeNode(const QModelIndex &parent, const QModelIndex &index)
 {
-    FindPositionVisitor fpv(static_cast<vsg::Node*>(index.internalPointer()));
-    removeRows(fpv(static_cast<vsg::Node*>(index.parent().internalPointer())), 1, parent);
+    //FindPositionVisitor fpv(static_cast<vsg::Node*>(index.internalPointer()));
+    //fpv.traversalMask = route::SceneObjects;
+    //removeRows(fpv(static_cast<vsg::Node*>(index.parent().internalPointer())), 1, parent);
+    removeRow(index.row(), parent);
 }
 
 QModelIndex SceneModel::index(const vsg::Node *node) const
@@ -182,6 +204,7 @@ QModelIndex SceneModel::index(const vsg::Node *node) const
 QModelIndex SceneModel::index(const vsg::Node *node, const vsg::Node *parent) const
 {
     FindPositionVisitor fpv(node);
+    fpv.traversalMask = route::SceneObjects;
     return createIndex(fpv(parent), 0, node);
 }
 
@@ -198,26 +221,24 @@ Qt::DropActions SceneModel::supportedDropActions() const
 QStringList SceneModel::mimeTypes() const
 {
     QStringList types;
-    types << "text/plain" << "application/octet-stream";
+    types << "text/plain";// << "application/octet-stream";
     return types;
 }
 
 QMimeData *SceneModel::mimeData(const QModelIndexList &indexes) const
 {
-    Q_ASSERT(indexes.count());
     if(indexes.count() != 1)
         return 0;
 
     vsg::VSG io;
-    auto options = vsg::Options::create();
-    options->extensionHint = "vsgb";
+    _compile->options->extensionHint = "vsgt";
 
     std::ostringstream oss;
 
     if (indexes.at(0).isValid()) {
         if(auto node = static_cast<vsg::Node*>(indexes.at(0).internalPointer()); node)
         {
-            io.write(node, oss, options);
+            io.write(node, oss, _compile->options);
         }
     } else
         return 0;
@@ -230,32 +251,24 @@ QMimeData *SceneModel::mimeData(const QModelIndexList &indexes) const
 bool SceneModel::dropMimeData(const QMimeData *data, Qt::DropAction action,
                                int row, int column, const QModelIndex &parent)
 {
-    if (!data->hasText())
+    if (!data->hasText() || column > 0 || !parent.isValid())
         return false;
-
-    if (action == Qt::IgnoreAction)
+    else if (action == Qt::IgnoreAction)
         return true;
-
-    if (column > 0)
-        return false;
-
-    if (!parent.isValid())
-        return false;
-
-    auto options = vsg::Options::create();
-    options->extensionHint = "vsgb";
 
     std::istringstream iss(data->text().toStdString());
 
     vsg::VSG io;
 
-    auto object = io.read(iss, options);
-    auto node = object.cast<route::SceneObject>();
+    auto object = io.read(iss, _compile->options);
+    auto node = object.cast<vsg::Node>();
     if(!node)
         return false;
 
-    Q_ASSERT(_compile);
     _compile->compile(node);
+
+    CalculateTransform ct;
+    node->accept(ct);
 
     _undoStack->push(new AddSceneObject(this, parent, node));
 
@@ -281,7 +294,10 @@ int SceneModel::rowCount(const QModelIndex &parent) const
     auto autoF = [&rows](const auto& node) { rows = node.children.size(); };
     auto swF = [&rows](const vsg::Switch& node)
     {
-        rows = std::count_if(node.children.begin(), node.children.end(), [](const vsg::Switch::Child &child){ return ((child.mask & route::SceneObjects) != 0); });
+        rows = std::count_if(node.children.begin(), node.children.end(), [](const vsg::Switch::Child &child)
+        {
+            return ((child.mask & route::SceneObjects) != 0);
+        });
     };
 
     CFunctionVisitor<decltype (autoF)> fv(autoF);
@@ -347,6 +363,7 @@ bool SceneModel::hasChildren(const QModelIndex &parent) const
         //auto trajF = [&has](const SceneTrajectory& node) { has = node.traj->size() != 0; };
 
         CFunctionVisitor<decltype (autoF)> fv(autoF);
+        fv.groupFunction = autoF;
         parentNode->accept(fv);
         return has;
     }

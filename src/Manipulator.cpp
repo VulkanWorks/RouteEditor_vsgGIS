@@ -41,97 +41,30 @@ void Manipulator::createPointer()
     auto cone = _database->getBuilder()->createCone(info);
     _pointer->addChild(cone);
 }
-/*
-void Manipulator::handlePress(vsg::ButtonPressEvent& buttonPressEvent)
-{
-    switch (_database->mode) {
-    case DatabaseManager::SELECT:
-    {
-        auto isection = intersectedObjects(route::SceneObjects | route::Points | route::Tiles, buttonPressEvent);
-        if(!isection.objects.empty())
-        {
-            auto node = isection.objects.front().first;
-            auto parent = isection.objects.front().second;
-            auto index = _database->tilesModel->index(node, parent);
-
-            _selector->addWireframe(index, node, isection.localToWord * vsg::inverse(node->transform(vsg::dmat4())));
-            emit objectClicked(index);
-        }
-        else
-            emit deselect();
-        break;
-    }
-    case DatabaseManager::ADD:
-    {
-        auto mask = route::Tiles | route::Tracks;
-        auto isection = intersectedObjects(mask, buttonPressEvent);
-
-        if(isection.tile.first)
-        {
-            FindPositionVisitor fpv(isection.tile.first);
-            emit objectClicked(_database->tilesModel->index(fpv(_database->tilesModel->getRoot()), 0, QModelIndex()));
-            _database->addToSelected(isection.worldIntersection);
-        }
-
-        break;
-    }
-
-    case TERRAIN:
-    {
-        if(points.contains(*(front.nodePath.rbegin() + 2)) && !isMovingTerrain)
-        {
-            isMovingTerrain = true;
-            movingPoint = const_cast<vsg::MatrixTransform *>((*(front.nodePath.rbegin() + 2))->cast<vsg::MatrixTransform>());
-
-            vsg::GeometryInfo info;
-            info.dx.set(4.0f, 0.0f, 0.0f);
-            info.dy.set(0.0f, 4.0f, 0.0f);
-            info.dz.set(0.0f, 0.0f, 4.0f);
-            info.color = {1.0f, 0.5f, 0.0f, 1.0f};
-
-            movingPoint->addChild(builder->createSphere(info));
-        } else
-        {
-            if(isMovingTerrain)
-               movingPoint->children.pop_back();
-            isMovingTerrain = false;
-        }
-        break;
-    }
-    case MOVE:
-    {
-        if(isMovingObject)
-        {
-            undoStack->endMacro();
-            isMovingObject = false;
-        } else {
-            auto find = std::find_if(front.nodePath.cbegin(), front.nodePath.cend(), isCompatible<SceneObject>);
-            if(find != front.nodePath.cend())
-            {
-                isMovingObject = true;
-                movingObject = const_cast<SceneObject *>((*find)->cast<SceneObject>());
-                undoStack->beginMacro("Перемещен объект");
-            }
-        }
-        break;
-    }
-    case ADDTRACK:
-    {
-        if(auto traj = std::find_if(front.nodePath.begin(), front.nodePath.end(), isCompatible<SceneTrajectory>); traj != front.nodePath.end())
-            emit addTrackRequest(const_cast<SceneTrajectory*>((*traj)->cast<SceneTrajectory>()), 0.0);
-        else if(auto tile = lowTile(front, database->frameCount); tile)
-            emit addRequest(front.worldIntersection, tilesModel->index(tile->children.at(5)));
-        break;
-    }
-    }
-
-
-}
-*/
 
 void Manipulator::setMask(uint32_t mask)
 {
     _mask = mask;
+}
+void Manipulator::apply(vsg::KeyPressEvent& keyPress)
+{
+     _keyModifier |= keyPress.keyModifier;
+
+     switch (keyPress.keyBase) {
+     case vsg::KEY_M:
+     {
+         startMoving();
+         break;
+     }
+     default:
+         break;
+
+     }
+}
+
+void Manipulator::apply(vsg::KeyReleaseEvent& keyRelease)
+{
+     _keyModifier &= !keyRelease.keyModifier;
 }
 
 void Manipulator::apply(vsg::ButtonPressEvent& buttonPress)
@@ -144,6 +77,11 @@ void Manipulator::apply(vsg::ButtonPressEvent& buttonPress)
     if (buttonPress.mask & vsg::BUTTON_MASK_1)
     {
         _updateMode = INACTIVE;
+        if(_isMoving)
+        {
+            _database->getUndoStack()->endMacro();
+            _isMoving = false;
+        }
         emit sendIntersection(intersectedObjects(_mask, buttonPress));
 
     } else if (buttonPress.mask & vsg::BUTTON_MASK_2)
@@ -284,9 +222,9 @@ void Manipulator::moveToObject(const QModelIndex &index)
     auto object = static_cast<vsg::Node*>(index.internalPointer());
     Q_ASSERT(object);
 
-    if(auto sceneobject = object->cast<route::SceneObject>(); sceneobject && !sceneobject->local)
+    if(auto sceneobject = object->cast<route::SceneObject>(); sceneobject)
     {
-        setViewpoint(sceneobject->getPosition());
+        setViewpoint(sceneobject->getWorldPosition());
         return;
     }
     ParentVisitor pv(object);
@@ -301,42 +239,73 @@ void Manipulator::moveToObject(const QModelIndex &index)
     setViewpoint(ltw * centre);
 }
 
+void Manipulator::setFirst(vsg::ref_ptr<route::SceneObject> firstObject)
+{
+    _movingObject = firstObject;
+}
+void Manipulator::startMoving()
+{
+    if(!_isMoving)
+    {
+        _isMoving = true;
+        _database->getUndoStack()->beginMacro(tr("Перемещены объекты"));
+    }
+}
 
 void Manipulator::apply(vsg::MoveEvent &pointerEvent)
 {
+    Trackball::apply(pointerEvent);
 
-    Trackball::apply(pointerEvent);/*
-    if(isMovingTerrain)
+    if(!_isMoving || !_movingObject)
+        return;
+
+    switch (_axis) {
+    case MovingAxis::TERRAIN:
     {
-        auto delta = (pointerEvent.y - _previousPointerEvent->y);
-        auto fmat = vsg::mat4(active->matrix);
-        vsg::vec3 mvec;
-        mvec.x = fmat[3].x;
-        mvec.y = fmat[3].y;
-        mvec.z = fmat[3].z;
-        auto norm = vsg::normalize(mvec);
+        auto isections = intersections(route::Tiles, pointerEvent);
+        if(isections.empty())
+            return;
+        auto isection = isections.front();
 
-        vsg::quat quat(vsg::vec3(0.0f, 0.0f, 1.0f), norm);
-        vsg::quat vec(0.0f, 0.0f, delta, 0.0f);
-        auto rotated = mult(mult(quat, vec), vsg::quat(-quat.x, -quat.y, -quat.z, quat.w));
-        auto point = points.value(movingPoint);
-        point->x += rotated.x;
-        point->y += rotated.y;
-        point->z += rotated.z;
-        movingPoint->matrix = vsg::translate(*point);
 
-        copyBufferCmd->copy(info->data, info);
+        vsg::dvec3 delta;
+        delta = isection.worldIntersection - _movingObject->getWorldPosition();
+
+        emit sendMovingDelta(delta);
     }
-    else if(isMovingObject)
+    case MovingAxis::X:
     {
-        auto isection = interesection(pointerEvent).front();
-        auto find = std::find_if(isection.nodePath.crbegin(), isection.nodePath.crend(), isCompatible<SceneObject>);
-        if(find == isection.nodePath.crend())
-            undoStack->push(new MoveObject(movingObject, isection.worldIntersection));
+        auto delta = pointerEvent.y - _previousPointerEvent->y;
+        auto quat = _movingObject->getWorldQuat();
+
+        vsg::dquat vec(delta, 0.0, 0.0, 0.0);
+        auto rotated = route::mult(route::mult(quat, vec), vsg::dquat(-quat.x, -quat.y, -quat.z, quat.w));
+
+        emit sendMovingDelta(vsg::dvec3(rotated.x, rotated.y, rotated.z));
+    }
+    case MovingAxis::Y:
+    {
+        auto delta = pointerEvent.y - _previousPointerEvent->y;
+        auto quat = _movingObject->getWorldQuat();
+
+        vsg::dquat vec(0.0, delta, 0.0, 0.0);
+        auto rotated = route::mult(route::mult(quat, vec), vsg::dquat(-quat.x, -quat.y, -quat.z, quat.w));
+
+        emit sendMovingDelta(vsg::dvec3(rotated.x, rotated.y, rotated.z));
+    }
+    case MovingAxis::Z:
+    {
+        auto delta = pointerEvent.y - _previousPointerEvent->y;
+        auto quat = _movingObject->getWorldQuat();
+
+        vsg::dquat vec(0.0, 0.0, delta, 0.0);
+        auto rotated = route::mult(route::mult(quat, vec), vsg::dquat(-quat.x, -quat.y, -quat.z, quat.w));
+
+        emit sendMovingDelta(vsg::dvec3(rotated.x, rotated.y, rotated.z));
+    }
 
     }
     _previousPointerEvent = &pointerEvent;
-*/
 }
 
 FindNode Manipulator::intersectedObjects(vsg::LineSegmentIntersector::Intersections isections)
@@ -345,6 +314,7 @@ FindNode Manipulator::intersectedObjects(vsg::LineSegmentIntersector::Intersecti
         return FindNode();
     FindNode fn(isections.front());
     std::for_each(fn.nodePath.begin(), fn.nodePath.end(), [&fn](const vsg::Node *node){ node->accept(fn); });
+    fn.keyModifier = _keyModifier;
     return fn;
 }
 

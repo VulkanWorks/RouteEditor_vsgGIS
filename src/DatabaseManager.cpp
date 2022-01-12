@@ -9,41 +9,6 @@
 
 #include <execution>
 
-/*
-vsg::ref_ptr<vsg::Switch> prepareTile(vsg::Group *tile, vsg::ref_ptr<vsg::Builder> builder, vsg::ref_ptr<vsg::CopyAndReleaseBuffer> copyBuffer)
-{
-    vsg::GeometryInfo info;
-
-    info.dx.set(3.0f, 0.0f, 0.0f);
-    info.dy.set(0.0f, 3.0f, 0.0f);
-    info.dz.set(0.0f, 0.0f, 3.0f);
-
-    auto sphere = builder->createSphere(info);
-    builder->compile(sphere);
-
-    auto sw = vsg::Switch::create();
-
-    for (auto& node : tile->children)
-    {
-        auto transform = node.cast<vsg::MatrixTransform>();
-        auto addPoint = [transform, sphere, copyBuffer](vsg::VertexIndexDraw& vid)
-        {
-            auto bufferInfo = vid.arrays.front();
-            auto vertarray = bufferInfo->data.cast<vsg::vec3Array>();
-            for (auto it = vertarray->begin(); it != vertarray->end(); ++it)
-            {
-                auto point = route::TerrainPoint::create(copyBuffer, bufferInfo, sphere, it);
-                transform->addChild(point);
-            }
-        };
-        LambdaVisitor<decltype (addPoint), vsg::VertexIndexDraw> lv(addPoint);
-        transform->accept(lv);
-        sw->addChild(route::Tiles, transform);
-    }
-
-    return sw;
-}
-*/
 DatabaseManager::DatabaseManager(QString path, QUndoStack *stack, vsg::ref_ptr<vsg::Builder> in_builder, QObject *parent) : QObject(parent)
   , _root(vsg::Group::create())
   , _databasePath(path)
@@ -114,6 +79,7 @@ SceneModel *DatabaseManager::loadTiles(vsg::ref_ptr<vsg::CopyAndReleaseBuffer> c
                         auto transform = node.cast<vsg::MatrixTransform>();
                         tile->addChild(route::Tiles, transform);
                     }
+                    tile->addChild(route::Points, vsg::Group::create());
                 }
                 else
                 {
@@ -123,8 +89,11 @@ SceneModel *DatabaseManager::loadTiles(vsg::ref_ptr<vsg::CopyAndReleaseBuffer> c
                 }
             }
 
-            auto pointGroup = vsg::Group::create();
-            tile->addChild(route::Points, pointGroup);
+            auto pointsIt = std::find_if(tile->children.begin(), tile->children.end(), [](const vsg::Switch::Child &ch)
+            {
+                return (ch.mask & route::Points) != 0;
+            });
+            auto pointGroup = pointsIt->node.cast<vsg::Group>();
 
             auto traverseTiles = [pointGroup, sphere, copyBuffer, pointsLOD, radius=size/2](vsg::MatrixTransform &transform)
             {
@@ -218,19 +187,22 @@ void DatabaseManager::writeTiles() noexcept
         object.removeObject("bound");
     };
     LambdaVisitor<decltype (removeBounds), vsg::VertexIndexDraw> lv(removeBounds);
+
     auto removePoints = [](vsg::Switch& sw)
     {
         for (auto it = sw.children.begin(); it != sw.children.end(); ++it)
         {
             if (it->mask == route::Points)
             {
-                sw.children.erase(it);
+                auto group = it->node.cast<vsg::Group>();
+                group->children.clear();
                 break;
             }
         }
     };
     LambdaVisitor<decltype (removePoints), vsg::Switch> lvp(removePoints);
     _tilesModel->getRoot()->accept(lvp);
+
 
     vsg::write(_database, _databasePath.toStdString(), _builder->options);
 

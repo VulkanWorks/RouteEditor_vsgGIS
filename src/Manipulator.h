@@ -19,6 +19,8 @@ public:
                 QObject *parent = nullptr);
     ~Manipulator();
 
+    void apply(vsg::KeyPressEvent& keyPress) override;
+    void apply(vsg::KeyReleaseEvent& keyPress) override;
     void apply(vsg::ButtonPressEvent& buttonPressEvent) override;
     void apply(vsg::MoveEvent& pointerEvent) override;
 
@@ -34,6 +36,8 @@ public:
 
 public slots:
     void moveToObject(const QModelIndex &index);
+    void setFirst(vsg::ref_ptr<route::SceneObject> firstObject);
+    void startMoving();
     void setViewpoint(const vsg::dvec3 &pos);
     void setLatLongAlt(const vsg::dvec3 &pos);
     void setViewpoint(const vsg::dvec4 &pos_mat);
@@ -41,6 +45,7 @@ public slots:
 
 signals:
     void sendPos(const vsg::dvec3 &pos);
+    void sendMovingDelta(const vsg::dvec3 &delta);
     void sendIntersection(const FindNode& isection);
     //void objectClicked(const QModelIndex &index);
     void sendStatusText(const QString &message, int timeout);
@@ -50,15 +55,28 @@ protected:
 
     //void handlePress(vsg::ButtonPressEvent& buttonPressEvent);
 
+    enum MovingAxis
+    {
+        X,
+        Y,
+        Z,
+        TERRAIN
+    };
+
+    MovingAxis _axis = TERRAIN;
+
     DatabaseManager *_database;
 
     vsg::ref_ptr<vsg::MatrixTransform> _pointer;
 
-    vsg::dmat4 _oldMatrix;
+    bool _isMoving;
+    vsg::ref_ptr<route::SceneObject> _movingObject;
 
     uint32_t _mask = 0xFFFFFF;
 
-    //FindNode _lastIntersection;
+    uint16_t _keyModifier = 0x0;
+
+    vsg::LineSegmentIntersector::Intersection _lastIntersection;
 };
 /*
 template<class T>

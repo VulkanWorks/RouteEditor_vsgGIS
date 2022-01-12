@@ -2,8 +2,9 @@
 #define SCENEOBJECTS_H
 
 #include <QFileInfo>
-//#include "trajectory.h"
+#include <vsg/maths/transform.h>
 #include <vsg/nodes/Transform.h>
+#include <vsg/utils/Builder.h>
 #include <vsg/commands/CopyAndReleaseBuffer.h>
 
 namespace route
@@ -15,8 +16,8 @@ namespace route
     {
     public:
         SceneObject();
-        SceneObject(const vsg::dvec3 &pos, const vsg::dquat &w_quat = {0.0, 0.0, 0.0, 1.0});
-        SceneObject(vsg::ref_ptr<vsg::Node> loaded, const vsg::dvec3 &pos = {}, const vsg::dquat &w_quat = {0.0, 0.0, 0.0, 1.0});
+        SceneObject(const vsg::dvec3 &pos, const vsg::dquat &w_quat = {0.0, 0.0, 0.0, 1.0}, const vsg::dmat4 &wtl = {});
+        SceneObject(vsg::ref_ptr<vsg::Node> loaded, const vsg::dvec3 &pos = {}, const vsg::dquat &w_quat = {0.0, 0.0, 0.0, 1.0}, const vsg::dmat4 &wtl = {});
 
 
         virtual ~SceneObject();
@@ -30,23 +31,42 @@ namespace route
         virtual void setPosition(const vsg::dvec3& pos) { _position = pos; }
         virtual void setRotation(const vsg::dquat& rot) { _quat = rot; }
 
+        void setWireframe(vsg::ref_ptr<vsg::Builder> builder);
+        void deselect() { _wireframe = nullptr; }
+
+        void traverse(vsg::RecordTraversal& visitor) const override
+        {
+            Group::traverse(visitor);
+            if(_wireframe)
+                _wireframe->accept(visitor);
+        }
+
         vsg::dvec3 getPosition() const { return _position; }
+        vsg::dvec3 getWorldPosition() const { return vsg::inverse(worldToLocal) * _position; }
+        vsg::dquat getWorldQuat() const { return _world_quat; }
         vsg::dquat getRotation() const { return _quat; }
 
+        bool isSelected() const { return _wireframe.valid(); }
 
-        bool local;
+        vsg::dmat4 worldToLocal;
 
     protected:
         vsg::dvec3 _position;
         vsg::dquat _quat;
 
-        vsg::dquat _world_quat = {0.0, 0.0, 0.0, 1.0};
+        vsg::ref_ptr<vsg::Node> _wireframe;
+
+        vsg::dquat _world_quat;
     };
 
     class SingleLoader : public vsg::Inherit<SceneObject, SingleLoader>
     {
     public:
-        SingleLoader(vsg::ref_ptr<vsg::Node> loaded, const std::string &in_file, const vsg::dvec3 &pos = {}, const vsg::dquat &in_quat = {0.0, 0.0, 0.0, 1.0});
+        SingleLoader(vsg::ref_ptr<vsg::Node> loaded,
+                     const std::string &in_file,
+                     const vsg::dvec3 &pos = {},
+                     const vsg::dquat &in_quat = {0.0, 0.0, 0.0, 1.0},
+                     const vsg::dmat4 &wtl = {});
         SingleLoader();
 
         virtual ~SingleLoader();
@@ -55,19 +75,6 @@ namespace route
         void write(vsg::Output& output) const override;
 
         std::string file;
-    };
-
-    class Selection : public vsg::Inherit<SceneObject, Selection>
-    {
-    public:
-        Selection(std::vector<vsg::ref_ptr<SceneObject>> in_selected);
-        Selection();
-
-        virtual ~Selection();
-
-        void setPosition(const vsg::dvec3& position) override;
-
-        std::vector<vsg::ref_ptr<SceneObject>> selected;
     };
 
     enum Mask : uint32_t
@@ -130,6 +137,22 @@ namespace route
 
         SplineTrajectory *trajectory;
     };
+/*
+    class RailConnectionPoint : public vsg::Inherit<SplinePoint, RailConnectionPoint>
+    {
+    public:
+        RailConnectionPoint(const vsg::dvec3 &point, vsg::ref_ptr<vsg::Node> compiled);
+        RailConnectionPoint();
+
+        virtual ~RailConnectionPoint();
+
+        void setPosition(const vsg::dvec3& position) override;
+        void setRotation(const vsg::dquat& rotation) override;
+
+        Trajectory *_1stTraj;
+        Trajectory *_2ndTraj;
+    };*/
+
 
     template<typename T>
     vsg::t_quat<T> mult(const vsg::t_quat<T>& lhs, const vsg::t_quat<T>& rhs)
