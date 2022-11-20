@@ -1,11 +1,5 @@
 cmake_minimum_required(VERSION 3.7)
 
-project(RouteEditor
-        VERSION 0.0.0
-        DESCRIPTION "Route editor for RRS based on VirtualPlanetBuilder databases"
-        LANGUAGES CXX C
-)
-
 # build all examples into the bin directory
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
@@ -13,88 +7,50 @@ set(SOURCES
     src/MainWindow.cpp
     src/MainWindow.h
     src/MainWindow.ui
-    src/AddDialog.ui
-    src/AddDialog.cpp
-    src/AddDialog.h
-#    src/sorter.ui
-#    src/sorter.h
-#    src/sorter.cpp
-#    src/metainf.h
-#    src/metainf.cpp
     src/ObjectPropertiesEditor.h
     src/ObjectPropertiesEditor.cpp
     src/ObjectPropertiesEditor.ui
-#    src/typecase.h
-    src/MouseHandler.h
-    src/MouseHandler.cpp
+    src/RailsPointEditor.h
+    src/RailsPointEditor.cpp
+    src/RailsPointEditor.ui
+    src/ContentManager.h
+    src/ContentManager.cpp
+    src/ContentManager.ui
+    #src/SignalManager.h
+    #src/SignalManager.cpp
+    #src/SignalManager.ui
+    src/RouteCmdDialog.h
+    src/RouteCmdDialog.cpp
+    src/RouteCmdDialog.ui
+    src/tool.h
+    src/tool.cpp
+    src/Painter.h
+    src/Painter.cpp
+    src/Painter.ui
     src/StartDialog.h
     src/StartDialog.cpp
     src/StartDialog.ui
+    src/AddRails.cpp
+    src/AddRails.ui
+    src/AddRails.h
     src/DatabaseManager.cpp
     src/DatabaseManager.h
-    src/undo-redo.cpp
-    src/undo-redo.h
     src/Manipulator.h
     src/Manipulator.cpp
-    src/tilessorter.cpp
-    src/tilessorter.h
-    src/TilesVisitor.cpp
-    src/TilesVisitor.h
-    src/TrajectoryModel.h
-    src/TrajectoryModel.cpp
+    src/TilesSorter.cpp
+    src/TilesSorter.h
     src/SceneModel.h
     src/SceneModel.cpp
+    src/PointsModel.h
+    src/PointsModel.cpp
+    src/SceneObjectVisitor.h
+    src/SceneObjectVisitor.cpp
+    src/undo-redo.h
+    src/undo-redo.cpp
+    src/InterlockDialog.h
+    src/InterlockDialog.cpp
+    src/InterlockDialog.ui
     src/main.cpp
-)
-
-set(TOOLS
-    tools/sceneobjects.h
-    tools/sceneobjects.cpp
-    tools/trackobjects.h
-    tools/trackobjects.cpp
-    #tools/connector.h
-    #tools/connector.cpp
-    tools/topology.h
-    tools/topology.cpp
-    tools/trajectory.h
-    tools/trajectory.cpp
-    #tools/LambdaVisitor.cpp
-    tools/vehicle-controller.h
-    tools/vehicle-controller.cpp
-    tools/LambdaVisitor.h
-    tools/ParentVisitor.cpp
-    tools/ParentVisitor.h
-)
-
-
-# Change the default build type to Release
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel." FORCE)
-endif(NOT CMAKE_BUILD_TYPE)
-
-# find the vsg
-if (VULKAN_SDK)
-    set(ENV{VULKAN_SDK} ${VULKAN_SDK})
-endif()
-
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC ON)
-
-find_package(Qt6 COMPONENTS Widgets REQUIRED)
-find_package(Qt6 COMPONENTS Xml REQUIRED)
-find_package(Qt6 COMPONENTS Concurrent REQUIRED)
-
-find_package(vsg REQUIRED)
-find_package(vsgXchange REQUIRED)
-find_package(vsgQt REQUIRED)
-
-# set the use of C++17 globally as all examples require it
-set(CMAKE_CXX_STANDARD 17)
-
-# add clobber build target to clear all the non git registered files/directories
-add_custom_target(clobber
-    COMMAND git clean -d -f -x
 )
 
 if(WIN32)
@@ -112,16 +68,6 @@ add_subdirectory(RRSConv)
 
 add_executable(editor ${SOURCES})
 
-target_include_directories(editor PRIVATE tools)
-
-add_library(tools ${TOOLS})
-
 target_compile_definitions(editor PRIVATE VK_USE_PLATFORM_XCB_KHR)
 
-target_compile_definitions(editor PRIVATE META_NAME="MetaName" META_TRACK="TrackInfo" TILE_PATH="Path" TOPOLOGY_KEY="topology" TOPOLOGY_CHILD=1 ORGANIZATION_NAME="RRS" ORGANIZATION_DOMAIN="rusrailsim.org" APPLICATION_NAME="editor")
-
-target_compile_definitions(tools PRIVATE META_NAME="MetaName" META_TRACK="TrackInfo" TOPOLOGY_KEY="topology")
-
-target_link_libraries(tools Qt6::Core)
-
-target_link_libraries(editor tools vsgQt::vsgQt vsg::vsg vsgXchange::vsgXchange Qt6::Concurrent)
+target_link_libraries(editor objects vsgQt::vsgQt vsg::vsg vsgXchange::vsgXchange)

@@ -9,8 +9,12 @@
 #include <vsgQt/ViewerWindow.h>
 #include <QUndoView>
 #include <QRegularExpression>
-#include "ObjectModel.h"
-#include "tilessorter.h"
+#include <vsg/all.h>
+#include <QToolBox>
+#include "TilesSorter.h"
+#include "ObjectPropertiesEditor.h"
+#include "RailsPointEditor.h"
+#include "AddRails.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -21,16 +25,11 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    MainWindow(QString routePath, QString skybox, QWidget *parent = nullptr);
+    MainWindow(vsg::ref_ptr<DatabaseManager> dbm, QWidget *parent = nullptr);
     ~MainWindow();
 
 public slots:
-//    void addToRoot(vsg::ref_ptr<vsg::Node> node);
-//    void setTilesModel(SceneModel *model);
-//    void openRoute();
-    void addObject();
-    void pushCommand(QUndoCommand *command);
-    //void receiveData(vsg::ref_ptr<vsg::Data> buffer, vsg::ref_ptr<vsg::BufferInfo> info);
+    void intersection(const FoundNodes& isection);
 
 private:
     QWindow* initilizeVSGwindow();
@@ -38,21 +37,24 @@ private:
 
     void constructWidgets();
 
-    //DatabaseManager *openDialog();
+    void initializeTools();
 
     Ui::MainWindow *ui;
-    vsg::ref_ptr<vsg::Group> scene;
-    //vsg::ref_ptr<vsg::Options> options;
-    vsg::ref_ptr<vsg::Builder> builder;
+
+    ObjectPropertiesEditor *ope;
+
+    AddRails *rm;
+
     double horizonMountainHeight;
     vsgQt::ViewerWindow *viewerWindow;
     DatabaseManager *database;
-    //vsg::ref_ptr<Manipulator> manipulator;
 
-    //QFileSystemModel *fsmodel;
+    QString pathDB;
+
     TilesSorter *sorter;
 
-    QUndoStack *undoStack;
+    QToolBox *toolbox;
+
     QUndoView *undoView;
 
 };

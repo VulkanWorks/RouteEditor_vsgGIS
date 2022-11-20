@@ -3,206 +3,147 @@
 #include "vsgGIS/TileDatabase.h"
 #include <QtConcurrent/QtConcurrent>
 #include <QInputDialog>
-#include "TilesVisitor.h"
 #include "undo-redo.h"
 #include "topology.h"
+#include "ParentVisitor.h"
+#include <QRegularExpression>
 
-DatabaseManager::DatabaseManager(const QString &path, QUndoStack *stack, vsg::ref_ptr<vsg::Builder> in_builder, QFileSystemModel *model, QObject *parent) : QObject(parent)
-  , databasePath(path.toStdString())
-  , builder(in_builder)
-  , fsmodel(model)
-  , modelsDir(vsg::getEnvPaths("RRS2_ROOT").begin()->c_str())
-  , undoStack(stack)
+DatabaseManager::DatabaseManager(vsg::ref_ptr<vsg::Group> database, vsg::ref_ptr<vsg::Group> nodes, vsg::ref_ptr<vsg::Options> options)
+  : root(nodes)
+  , _database(database)
 {
-    database = vsg::read_cast<vsg::Group>(databasePath, builder->options);
-    if (!database)
-        throw (DatabaseException(path));
+    builder = vsg::Builder::create();
+    builder->options = options;
 
-    try {
-        topology = database->children.at(TOPOLOGY_CHILD).cast<Topology>();
-    }  catch (std::out_of_range) {
-        topology = Topology::create();
-        database->addChild(topology);
+    topology = _database->getObject<route::Topology>(app::TOPOLOGY);
+    if(!topology)
+    {
+        topology = route::Topology::create();
+        _database->setObject(app::TOPOLOGY, topology);
     }
-    builder->options->objectCache->add(topology, TOPOLOGY_KEY);
 
-    QFileInfo directory(path);
-    QStringList filter("*subtile.vsg*");
-    QStringList tileFiles;
-    QDirIterator it(directory.absolutePath(), filter, QDir::Files | QDir::NoSymLinks | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-    while (it.hasNext())
-        tileFiles << it.next();
-    std::function<QPair<QString, vsg::ref_ptr<vsg::Node>>(const QString &tilepath)> load = [in_builder](const QString &tilepath)
-    {
-        QFileInfo info(tilepath);
-        try {
-            auto tile = vsg::read_cast<vsg::Node>(tilepath.toStdString(), in_builder->options);
-            if (tile)
-                return qMakePair(info.fileName(), tile);
-            else
-                throw (DatabaseException(tilepath));
-        }  catch (std::out_of_range) {
-            throw (DatabaseException (tilepath));
-        }
+    auto modelroot = vsg::Group::create();
+    modelroot->addChild(nodes);
+    modelroot->addChild(database);
 
-    };
-    std::function reduce = [](QMap<QString, vsg::ref_ptr<vsg::Node>> &map, const QPair<QString, vsg::ref_ptr<vsg::Node>> &node)
-    {
-        map.insert(node.first, node.second);
-    };
-    QFuture<QMap<QString, vsg::ref_ptr<vsg::Node>>> future = QtConcurrent::mappedReduced(tileFiles, load, reduce, QtConcurrent::UnorderedReduce);
-    future.waitForFinished();
+    vsg::visit<ParentIndexer>(modelroot);
 
-    LoadTiles lt(future.result());
-    database->accept(lt);
-    tilesModel = new SceneModel(lt.tiles, builder, stack, this);
+    tilesModel = new SceneModel(modelroot, builder, undoStack);
 }
 DatabaseManager::~DatabaseManager()
 {
 }
-/*
-vsg::ref_ptr<vsg::Node> DatabaseManager::read(const QString &path) const
+
+void DatabaseManager::setUndoStack(QUndoStack *stack)
 {
-    auto tile = vsg::read_cast<vsg::Node>(path.toStdString(), builder->options);
-    if (tile)
-    {
-        //tile->setValue(META_NAME, path.toStdString());
-        return tile;
-    } else
-        throw (DatabaseException(path));
-}
-*/
-void DatabaseManager::addObject(vsg::dvec3 position, const QModelIndex &index) noexcept
-{
-
-    if(!loaded || (loadToSelected && !activeGroup.isValid()) || (!loadToSelected && !index.isValid()) || loaded.type == TrkObj)
-        return;
-
-    QModelIndex readindex = loadToSelected ? activeGroup : index;
-
-    vsg::ref_ptr<SceneObject> obj;
-    auto norm = vsg::normalize(position);
-    vsg::dquat quat(vsg::dvec3(0.0, 0.0, 1.0), norm);
-
-    if(static_cast<vsg::Node*>(readindex.internalPointer())->is_compatible(typeid (SceneObject)))
-        position = vsg::dvec3();
-    if (loaded.type == Trk)
-    {
-        if(auto trj = createTrajectory(loaded); trj != nullptr)
-            obj = SceneTrajectory::create(trj, position, quat);
-        else
-            return;
-    }
-    else if(placeLoader)
-        obj = SingleLoader::create(loaded.node, modelsDir.relativeFilePath(loaded.path).toStdString(), position, quat);
-    else
-        obj = SceneObject::create(loaded.node, position, quat);
-    undoStack->push(new AddNode(tilesModel, readindex, obj));
+    undoStack = stack;
+    tilesModel->setUndoStack(stack);
 }
 
-void DatabaseManager::addTrack(SceneTrajectory *traj, double position) noexcept
+void DatabaseManager::setViewer(vsg::ref_ptr<vsg::Viewer> viewer)
 {
-    switch (loaded.type) {
-    case Obj:
-    {
-        return;
-    }
-    case Trk:
-    {
-        if(position == 0.0)
-            undoStack->push(new AddTrack(traj->traj, loaded));
-        else
-            createTrajectory(loaded, traj->traj);
-        break;
-    }
-    case TrkObj:
-    {
-        break;
-    }
-    }
+    this->viewer = viewer;
+
+    builder->options->setObject(app::VIEWER, viewer);
+
+    vsg::StateInfo si;
+    si.lighting = false;
+    si.wireframe = true;
+    vsg::GeometryInfo gi;
+    _stdWireBox = builder->createBox(gi, si);
+
+    builder->options->setObject(app::WIREFRAME, _stdWireBox.get());
+
+    _stdAxis = vsg::Group::create();
+
+    gi.dx = vsg::vec3(1.0f, 0.0f, 0.0f);
+    gi.dy = vsg::vec3(0.0f, 0.1f, 0.0f);
+    gi.dz = vsg::vec3(0.0f, 0.0f, 0.1f);
+    gi.color = vsg::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    _stdAxis->addChild(builder->createBox(gi));
+    gi.dx = vsg::vec3(0.1f, 0.0f, 0.0f);
+    gi.dy = vsg::vec3(0.0f, 1.0f, 0.0f);
+    gi.dz = vsg::vec3(0.0f, 0.0f, 0.1f);
+    gi.color = vsg::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+    _stdAxis->addChild(builder->createBox(gi));
+    gi.dx = vsg::vec3(0.1f, 0.0f, 0.0f);
+    gi.dy = vsg::vec3(0.0f, 0.1f, 0.0f);
+    gi.dz = vsg::vec3(0.0f, 0.0f, 1.0f);
+    gi.color = vsg::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+    _stdAxis->addChild(builder->createBox(gi));
 }
 
-Trajectory *DatabaseManager::createTrajectory(const Loaded &loaded, Trajectory *prev)
+vsg::ref_ptr<vsg::Group> DatabaseManager::getDatabase() const noexcept { return _database; }
+
+vsg::ref_ptr<vsg::Node> DatabaseManager::getStdWireBox()
 {
-    bool ok;
-    QString name = QInputDialog::getText(qobject_cast<QWidget*>(parent()) , tr("Имя новой траектории"),
-                                         tr("Имя:"), QLineEdit::Normal, "", &ok);
-    if (ok && !name.isEmpty())
-    {
-        while (topology->trajectories.find(name.toStdString()) != topology->trajectories.end())
-        {
-            name = QInputDialog::getText(qobject_cast<QWidget*>(parent()) , tr("Имя новой траектории"),
-                                                 tr("Уже использовано, введите другое:"), QLineEdit::Normal, "", &ok);
-            if(!ok)
-                return nullptr;
-        }
-        undoStack->beginMacro(tr("Добавлена траектория %1").arg(name));
-        auto cmd = new AddTrajectory(topology, name.toStdString(), prev);
-        undoStack->push(cmd);
-        undoStack->push(new AddTrack(cmd->_traj, loaded));
-        undoStack->endMacro();
-        return cmd->_traj;
-    }
-    return nullptr;
+    if(!_compiled)
+        compile();
+
+    return _stdWireBox;
 }
 
-void DatabaseManager::activeGroupChanged(const QModelIndex &index) noexcept
+vsg::ref_ptr<vsg::Node> DatabaseManager::getStdAxis()
 {
-    activeGroup = index;
+    if(!_compiled)
+        compile();
+
+    return _stdAxis;
 }
 
-void DatabaseManager::loaderButton(bool checked) noexcept
-{
-    placeLoader = checked;
-}
-
-void DatabaseManager::activeFileChanged(const QItemSelection &selected, const QItemSelection &) noexcept
-{
-    auto path = fsmodel->filePath(selected.indexes().front());
-    auto node = vsg::read_cast<vsg::Node>(path.toStdString(), builder->options);
-    if(!node)
-    {
-        emit sendStatusText(tr("Ошибка при загрузке модели %1").arg(path), 5);
-        loaded.node = nullptr;
-        return;
-    }
-    builder->compile(node);
-    loaded.type = Obj;
-    if(node->getObject(META_TRACK))
-        loaded.type = Trk;
-    QDir dir(qgetenv("RRS2_ROOT"));
-    loaded.path = dir.relativeFilePath(path);
-    loaded.node = node;
-}
-
-void write(const vsg::ref_ptr<vsg::Node> node)
-{
-    std::string file;
-    if(node->getValue(TILE_PATH, file))
-    {
-        node->removeObject(TILE_PATH);
-        if(!vsg::write(node, file))
-            throw (DatabaseException(file.c_str()));
-        node->setValue(TILE_PATH, file);
-    }
-}
-
-void DatabaseManager::writeTiles() noexcept
+void DatabaseManager::writeTiles()
 {
     auto removeBounds = [](vsg::VertexIndexDraw& object)
     {
         object.removeObject("bound");
     };
     LambdaVisitor<decltype (removeBounds), vsg::VertexIndexDraw> lv(removeBounds);
-    tilesModel->getRoot()->accept(lv);
-    vsg::write(database, databasePath, builder->options);
-    try {
-        QFuture<void> future = QtConcurrent::map(tilesModel->getRoot()->children, write);
-        future.waitForFinished();
-        undoStack->setClean();
-    }  catch (DatabaseException &ex) {
 
-    }
+    auto removeParents = [](vsg::Node& node)
+    {
+        node.removeObject(app::PARENT);
+    };
+    LambdaVisitor<decltype (removeParents), vsg::Node> lvmp(removeParents);
+
+    tilesModel->getRoot()->accept(lv);
+    tilesModel->getRoot()->accept(lvmp);
+
+    std::string path;
+    if(!_database->getValue(app::PATH, path))
+        throw DatabaseException(QObject::tr("Ошибка записи"));
+
+    vsg::write(_database, path, builder->options);
+
+    auto write = [options=builder->options](const auto node)
+    {
+        std::string path;
+        if(!node->getValue(app::PATH, path))
+            return;
+        auto ext = vsg::lowerCaseFileExtension(path);
+        if (ext == ".vsgt" || ext == ".vsgb")
+        {
+            vsg::VSG rw;
+            rw.write(node, path, options);
+        }
+    };
+
+    auto future = QtConcurrent::map(root->children.begin(), root->children.end(), write);
+    future.waitForFinished();
+
+    undoStack->setClean();
+    vsg::visit<ParentIndexer>(tilesModel->getRoot());
+}
+
+void DatabaseManager::compile()
+{
+    Q_ASSERT(viewer);
+
+    auto res = viewer->compileManager->compile(_stdAxis);
+    vsg::updateViewer(*viewer, res);
+    res = viewer->compileManager->compile(_stdWireBox);
+    vsg::updateViewer(*viewer, res);
+
+    _compiled = true;
 }
 
 

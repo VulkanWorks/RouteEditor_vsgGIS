@@ -1,38 +1,40 @@
 #ifndef CONTENTMANAGER_H
 #define CONTENTMANAGER_H
 
-#include <QWidget>
+#include "tool.h"
 #include <QFileSystemModel>
 #include <QItemSelectionModel>
-#include "undo-redo.h"
 
 namespace Ui {
 class ContentManager;
 }
 
-class ContentManager : public QWidget
+class ContentManager : public Tool
 {
     Q_OBJECT
-
 public:
-    ContentManager(vsg::ref_ptr<vsg::Builder> builder, vsg::ref_ptr<vsg::Options> options, QWidget *parent = nullptr);
-    ~ContentManager();
+    ContentManager(DatabaseManager *database, QString root, QWidget *parent = nullptr);
+    virtual ~ContentManager();
 
-    std::optional<vsg::ref_ptr<vsg::Node>> getSelectedObject();
-    //void setActiveGroup(const QItemSelection &selected, const QItemSelection &);
+    void intersection(const FoundNodes& isection) override;
+
+public slots:
+    void activeGroupChanged(const QModelIndex &index);
 
 signals:
-    void compile();
+    void sendObject(route::SceneObject *object);
 
 private:
-    void loadModels(QStringList tileFiles);
-    std::pair<QString, vsg::ref_ptr<vsg::Node>> read(const QString &path);
+    bool addToTrack(vsg::ref_ptr<route::SceneObject> obj, const FoundNodes &isection);
+    bool addSignal(vsg::ref_ptr<route::SceneObject> obj, const FoundNodes& isection);
 
     Ui::ContentManager *ui;
-    QMap<QString, vsg::ref_ptr<vsg::Node>> preloaded;
 
-    QModelIndex active;
-    QFileSystemModel *model;
+    QModelIndex _activeGroup;
+
+    QDir modelsDir;
+
+    QFileSystemModel *_fsmodel;
 };
 
 #endif // CONTENTMANAGER_H

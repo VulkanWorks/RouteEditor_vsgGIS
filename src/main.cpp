@@ -6,9 +6,9 @@
 
 int main(int argc, char *argv[])
 {
-    QCoreApplication::setOrganizationName(ORGANIZATION_NAME);
-    QCoreApplication::setOrganizationDomain(ORGANIZATION_DOMAIN);
-    QCoreApplication::setApplicationName(APPLICATION_NAME);
+    QCoreApplication::setOrganizationName(app::ORGANIZATION_NAME);
+    QCoreApplication::setOrganizationDomain(app::ORGANIZATION_DOMAIN);
+    QCoreApplication::setApplicationName(app::APPLICATION_NAME);
 
     QApplication a(argc, argv);
     StartDialog dialog;
@@ -16,13 +16,12 @@ int main(int argc, char *argv[])
     {
         dialog.updateSettings();
         try {
-            MainWindow w(dialog.routePath, dialog.skyboxPath);
-            w.show();
+            MainWindow w(dialog.database.result());
             w.showMaximized();
             return a.exec();
         }  catch (DatabaseException &ex) {
             QErrorMessage errorMessageDialog;
-            errorMessageDialog.showMessage(QObject::tr("Ошибка при загрузке маршрута"));
+            errorMessageDialog.showMessage(ex.getErrPath());
             errorMessageDialog.exec();
         }
     }

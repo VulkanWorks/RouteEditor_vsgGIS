@@ -9,7 +9,8 @@
 #include <QtWidgets/QMainWindow>
 #include <vsgQt/ViewerWindow.h>
 
-#include "sceneobjects.h"
+#include "animated-model.h"
+#include "IntersectionHandler.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -23,7 +24,6 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-    void generateTrackFile(vsg::ref_ptr<Track> track);
 /*
 public slots:
     void openModel();
@@ -34,12 +34,14 @@ private:
     QWindow* initilizeVSGwindow();
     QWidget *embedded;
 
+    vsg::ref_ptr<IntersectionHandler> handler;
+
     void constructWidgets();
 
     Ui::MainWindow *ui;
-    vsg::ref_ptr<vsg::Node> scene;
+    vsg::ref_ptr<vsg::Group> scene;
+    vsg::ref_ptr<AnimatedModel> model;
     vsg::ref_ptr<vsg::Options> options;
-    //vsg::ref_ptr<vsg::Builder> builder;
     vsgQt::ViewerWindow *viewerWindow;
 
 };
